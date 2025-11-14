@@ -22,9 +22,10 @@ def plot_3d(df: pd.DataFrame, filename: Path, arrow_scale: float = 0.05):
     positions_min = positions_all.min(axis=0)
     positions_max = positions_all.max(axis=0)
     positions_range = positions_max - positions_min
+
     positions_good = (particles_good[['tx', 'ty', 'tz']].to_numpy() - positions_min) / positions_range
-    positions_bad  = (particles_bad[['tx', 'ty', 'tz']].to_numpy()  - positions_min) / positions_range
-    positions_flipped = (particles_flipped[['tx', 'ty', 'tz']].to_numpy()  - positions_min) / positions_range
+    positions_bad = (particles_bad[['tx', 'ty', 'tz']].to_numpy() - positions_min) / positions_range
+    positions_flipped = (particles_flipped[['tx', 'ty', 'tz']].to_numpy() - positions_min) / positions_range
 
     # extract orientation vectors
     def extract_orientations(df: pd.DataFrame, flip_z: bool = False) -> NDArray[np.float64]:
@@ -42,13 +43,21 @@ def plot_3d(df: pd.DataFrame, filename: Path, arrow_scale: float = 0.05):
     orientations_good = extract_orientations(particles_good)
     orientations_flipped = extract_orientations(particles_flipped, True)
 
+    # color good particles by their lattice id
+    unique_lattices = np.sort(np.abs(particles_good['lattice'].unique()))
+    n_colors = len(unique_lattices)
+    cmap = plt.cm.get_cmap('tab20', n_colors)
+    class_to_cmap_index = {int(lid): i for i, lid in enumerate(unique_lattices)}
+    cmap_indices = particles_good['lattice'].map(class_to_cmap_index).to_numpy(dtype=int)
+
     # plot
     fig = plt.figure(figsize=(8, 6))
     ax = fig.add_subplot(111, projection='3d')
 
     ax.scatter(
         positions_good[:, 0], positions_good[:, 1], positions_good[:, 2],
-        c='g', s=30, depthshade=True, alpha=1.0, label='good'
+        c=cmap_indices, cmap=cmap, vmin=0, vmax=n_colors - 1,
+        s=30, depthshade=True, alpha=1.0, label='good (colored by lattice)'
     )
     ax.scatter(
         positions_bad[:, 0], positions_bad[:, 1], positions_bad[:, 2],
@@ -85,7 +94,8 @@ def flip_particles(
     particles_lattice_id: NDArray[np.int_],
     particles_in_lattice: NDArray[np.bool_],
     n_lattices: int,
-    z_shift_if_flipped: float
+    z_shift_if_flipped: float,
+    plot: bool,
 ):
     n_particles = len(positions)
 
@@ -111,9 +121,12 @@ def flip_particles(
 
     if flipped_indices.size > 0:
         print(f'Flipping {flipped_indices.size} particles')
-        df.loc[flipped_indices, 'class'] = -1  # for plotting only
+        if plot:
+            df.loc[flipped_indices, 'class'] = -1
 
         # rotate 180 around x
+        # TODO when doing so, we mess up the in-place alignment,
+        #      maybe adding a rotz180 after the rotx180 would be good
         rotation_matrices[flipped_indices, :, 2] *= -1
         rotation_matrices[flipped_indices, :, 0] *= -1
 
@@ -139,8 +152,10 @@ def clean_particles(
     max_curvature: float,
     min_neighbours: int,
     min_lattice_size: int,
+    allow_flipped_particles: bool,
     orientation_flip: bool,
-    z_shift_if_flipped: float
+    z_shift_if_flipped: float,
+    plot: bool,
 ) -> pd.DataFrame:
     # extract the data
     positions = df[['tx', 'ty', 'tz']].to_numpy(dtype=np.float64)
@@ -157,8 +172,9 @@ def clean_particles(
 
     # create a mask for the orientations within the specified range
     orientation_matrix = np.clip(orientations @ orientations.T, -1.0, 1.0)
-    orientation_mask = ((np.abs(orientation_matrix) >= min_orientation) &
-                        (np.abs(orientation_matrix) <= max_orientation))
+    if allow_flipped_particles:
+        orientation_matrix = np.abs(orientation_matrix)
+    orientation_mask = (orientation_matrix >= min_orientation) & (orientation_matrix <= max_orientation)
 
     # create a mask for the distances within the specified range
     distance_matrix = positions[:, None, :] - positions[None, :, :]  # (n,n,3)
@@ -196,11 +212,21 @@ def clean_particles(
     print(f'Particles left={particles_in_lattice.sum()}/{n_particles} '
           f'({n_particles - particles_in_lattice.sum()} removed)')
 
+    # use an empty column to store the lattice id for plotting
+    if plot:
+        df['lattice'] = particles_lattice_id
+
     if orientation_flip:
         flip_particles(
-            df, positions, rotation_matrices, orientations,
-            particles_lattice_id, particles_in_lattice, n_lattices,
-            z_shift_if_flipped
+            df,
+            positions=positions,
+            rotation_matrices=rotation_matrices,
+            orientations=orientations,
+            particles_lattice_id=particles_lattice_id,
+            particles_in_lattice=particles_in_lattice,
+            n_lattices=n_lattices,
+            z_shift_if_flipped=z_shift_if_flipped,
+            plot=plot,
         )
 
     return df
@@ -214,6 +240,7 @@ def process_file(
     curvature_tolerance: float,
     min_neighbours: int,
     min_array_size: int,
+    allow_flipped_particles: bool,
     flip_z: bool,
     plot: bool
 ):
@@ -225,19 +252,23 @@ def process_file(
         skip_blank_lines=True,
         index_col=False,
         names=[
-            'cc', 'sampling', 'e0', 'uid', 'e1', 'e2', 'e3', 'e4', 'e5', 'e6',
+            'cc', 'sampling', 'e0', 'uid', 'e1', 'e2', 'lattice', 'e4', 'e5', 'e6',
             'tx', 'ty', 'tz', 'angle0', 'angle1', 'angle2',
             'r00', 'r10', 'r20', 'r01', 'r11', 'r21', 'r02', 'r12', 'r22', 'class'
         ]
     )
 
-    # Convert to cosine for dot product comparison
+    # convert for dot product comparison
+    angle_tolerance = np.clip(angle_tolerance, 0., 90.)
     min_orientation = np.cos(np.radians(angle_tolerance))
     max_orientation = 1.0
 
+    curvature_tolerance = np.clip(curvature_tolerance, 0., 90.)
     min_curvature = np.sin(np.radians(-curvature_tolerance))
     max_curvature = np.sin(np.radians(+curvature_tolerance))
 
+    # returned class=0 means the particle is removed,
+    # and class >= 1 it's the lattice id for plotting
     df = clean_particles(
         df,
         min_distance,
@@ -248,15 +279,15 @@ def process_file(
         max_curvature,
         min_neighbours,
         min_array_size,
+        allow_flipped_particles=allow_flipped_particles,
         orientation_flip=flip_z,
-        z_shift_if_flipped=20
+        z_shift_if_flipped=0,
+        plot=plot,
     )
 
     if plot:
         plot_3d(df, filename=csv_file, arrow_scale=0.05)
-
-    # reset class=-1 to 1 (this was just for plotting)
-    df.loc[df['class'] == -1, 'class'] = 1
+        df['lattice'] = 1  # TODO we could leave it, emClarity ignores it anyway
 
     # remove cleaned-out particles from the csv
     df.drop(df[df['class'] == -9999].index, inplace=True)
@@ -267,19 +298,25 @@ def process_file(
     print(f'Saved cleaned dataframe: {output_file}\n')
 
 
-@cli.command(no_args_is_help=True)
+@cli.command(no_args_is_help=True, help='Remove particles from emClarity CSV files based on simple geometry constrains')
 def main(
-    csv_pattern: str = typer.Option(..., help='Path or glob pattern for CSV file(s), e.g., "data/*.csv"'),
-    min_distance: float = 20,
-    max_distance: float = 120,
-    angle_tolerance: float = 90,
-    curvature_tolerance: float = 90,
-    min_neighbours: int = 3,
-    min_array_size: int = 6,
-    flip_z: bool = False,
-    plot: bool = False
+    csv_pattern: str = typer.Option(..., help='Path or glob pattern for CSV file(s), e.g., "tilt1_1_bin6.csv" or "convmap/*.csv"'),
+    min_distance: float = typer.Option(20, help='Min distance between particles, in unbinned pixels'),
+    max_distance: float = typer.Option(120, help='Max distance between particles, in unbinned pixels'),
+    angle_tolerance: float = typer.Option(40, help='Angle tolerance between particles, in degrees. Clamped between 0 to 90'),
+    allow_flipped_particles: bool = typer.Option(True, help='When filtering based on the angle tolerance, ignore whether the particles are up or down.'),
+    curvature_tolerance: float = typer.Option(40, help='Curvature tolerance between particles, in degrees. Clamped between 0 to 90'),
+    min_neighbours: int = typer.Option(3, help='Remove particles with less than this number of neighbours'),
+    min_array_size: int = typer.Option(6, help='Remove lattices with less than this number of valid particles'),
+    flip_z: bool = typer.Option(False, help='Rotate particles 180° around their x-axis if facing opposite to lattice average orientation'),
+    plot: bool = typer.Option(False, help='Plot before saving the cleaned file'),
 ):
-    csv_files = sorted(glob_module.glob(csv_pattern))
+    # Get the csv files, handling the shell expansion
+    pattern_path = Path(csv_pattern)
+    if pattern_path.exists() and pattern_path.is_file():
+        csv_files = [str(pattern_path)]
+    else:
+        csv_files = sorted(glob_module.glob(csv_pattern))
 
     if not csv_files:
         print(f'Error: No files found matching pattern: {csv_pattern}')
@@ -288,23 +325,17 @@ def main(
     # Process each file
     for csv_file_str in csv_files:
         process_file(
-            Path(csv_file_str),
-            min_distance,
-            max_distance,
-            angle_tolerance,
-            curvature_tolerance,
-            min_neighbours,
-            min_array_size,
-            flip_z,
-            plot
+            csv_file=Path(csv_file_str),
+            min_distance=min_distance,
+            max_distance=max_distance,
+            angle_tolerance=angle_tolerance,
+            curvature_tolerance=curvature_tolerance,
+            min_neighbours=min_neighbours,
+            min_array_size=min_array_size,
+            allow_flipped_particles=allow_flipped_particles,
+            flip_z=flip_z,
+            plot=plot,
         )
-
-    # NOTE: the rotation matrices SHOULD encode the transformation from the particle/template coordinate
-    # to the tomogram coordinate. Looking at the emClarity code, it is very confusing to know for certain,
-    # but when plotting the z-vectors, it seems to confirm it.
-
-    # NOTE: when flipping the particles, we lose the in-place rotation.
-    # TODO check convex vs concave
 
 
 if __name__ == '__main__':
