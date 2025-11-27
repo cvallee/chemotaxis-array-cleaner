@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-import glob as glob_module
+import glob
 import typer
 
 from pathlib import Path
@@ -317,7 +317,7 @@ def main(
     if pattern_path.exists() and pattern_path.is_file():
         csv_files = [str(pattern_path)]
     else:
-        csv_files = sorted(glob_module.glob(csv_pattern))
+        csv_files = sorted(glob.glob(csv_pattern))
 
     if not csv_files:
         print(f'Error: No files found matching pattern: {csv_pattern}')
