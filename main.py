@@ -19,74 +19,74 @@ def plot_3d(df: pd.DataFrame, filename: Path, arrow_scale: float = 0.05):
     particles_flipped = df[df['class'] == -1]
     if len(particles_good) == 0:
         print(f'All the particles were removed, skipping plot for {filename.stem}')
-    else:
-        # normalize positions between [0,1]
-        positions_all = df[['tx','ty','tz']].to_numpy()
-        positions_min = positions_all.min(axis=0)
-        positions_max = positions_all.max(axis=0)
-        positions_range = positions_max - positions_min
+        return
+    # normalize positions between [0,1]
+    positions_all = df[['tx','ty','tz']].to_numpy()
+    positions_min = positions_all.min(axis=0)
+    positions_max = positions_all.max(axis=0)
+    positions_range = positions_max - positions_min
 
-        positions_good = (particles_good[['tx', 'ty', 'tz']].to_numpy() - positions_min) / positions_range
-        positions_bad = (particles_bad[['tx', 'ty', 'tz']].to_numpy() - positions_min) / positions_range
-        positions_flipped = (particles_flipped[['tx', 'ty', 'tz']].to_numpy() - positions_min) / positions_range
+    positions_good = (particles_good[['tx', 'ty', 'tz']].to_numpy() - positions_min) / positions_range
+    positions_bad = (particles_bad[['tx', 'ty', 'tz']].to_numpy() - positions_min) / positions_range
+    positions_flipped = (particles_flipped[['tx', 'ty', 'tz']].to_numpy() - positions_min) / positions_range
 
-        # extract orientation vectors
-        def extract_orientations(df: pd.DataFrame, flip_z: bool = False) -> NDArray[np.float64]:
-            R = df[
-                ['r00', 'r01', 'r02',
-                 'r10', 'r11', 'r12',
-                 'r20', 'r21', 'r22']
-            ].to_numpy(dtype=np.float64).reshape(-1, 3, 3)
-            z = R[:, :, 2]
-            z /= np.linalg.norm(z, axis=1, keepdims=True)
-            if flip_z:
-                z *= -1
-            return z
+    # extract orientation vectors
+    def extract_orientations(df: pd.DataFrame, flip_z: bool = False) -> NDArray[np.float64]:
+        R = df[
+            ['r00', 'r01', 'r02',
+             'r10', 'r11', 'r12',
+             'r20', 'r21', 'r22']
+        ].to_numpy(dtype=np.float64).reshape(-1, 3, 3)
+        z = R[:, :, 2]
+        z /= np.linalg.norm(z, axis=1, keepdims=True)
+        if flip_z:
+            z *= -1
+        return z
 
-        orientations_good = extract_orientations(particles_good)
-        orientations_flipped = extract_orientations(particles_flipped, True)
+    orientations_good = extract_orientations(particles_good)
+    orientations_flipped = extract_orientations(particles_flipped, True)
 
-        # color good particles by their lattice id
-        unique_lattices = np.sort(particles_good['lattice'].unique())
-        n_colors = len(unique_lattices)
-        cmap = plt.colormaps['tab20'].resampled(n_colors)
-        class_to_cmap_index = {int(lid): i for i, lid in enumerate(unique_lattices)}
-        cmap_indices = particles_good['lattice'].map(class_to_cmap_index).to_numpy(dtype=int)
+    # color good particles by their lattice id
+    unique_lattices = np.sort(particles_good['lattice'].unique())
+    n_colors = len(unique_lattices)
+    cmap = plt.colormaps['tab20'].resampled(n_colors)
+    class_to_cmap_index = {int(lid): i for i, lid in enumerate(unique_lattices)}
+    cmap_indices = particles_good['lattice'].map(class_to_cmap_index).to_numpy(dtype=int)
 
-        # plot
-        fig = plt.figure(figsize=(8, 6))
-        ax = fig.add_subplot(111, projection='3d')
+    # plot
+    fig = plt.figure(figsize=(8, 6))
+    ax = fig.add_subplot(111, projection='3d')
 
-        ax.scatter(
-            positions_good[:, 0], positions_good[:, 1], positions_good[:, 2],
-            c=cmap_indices, cmap=cmap, vmin=0, vmax=n_colors - 1,
-            s=30, depthshade=True, alpha=1.0, label='good (colored by lattice)'
-        )
-        ax.scatter(
-            positions_bad[:, 0], positions_bad[:, 1], positions_bad[:, 2],
-            c='k', s=5, depthshade=True, alpha=0.5, label='bad', zorder=10
-        )
-        ax.quiver(
-            positions_good[:, 0], positions_good[:, 1], positions_good[:, 2],
-            orientations_good[:, 0], orientations_good[:, 1], orientations_good[:, 2],
-            length=arrow_scale, color='k', linewidth=0.5, arrow_length_ratio=0.1
-        )
-        ax.quiver(
-            positions_flipped[:, 0], positions_flipped[:, 1], positions_flipped[:, 2],
-            orientations_flipped[:, 0], orientations_flipped[:, 1], orientations_flipped[:, 2],
-            length=arrow_scale, color='r', linewidth=0.5, arrow_length_ratio=0.1
-        )
+    ax.scatter(
+        positions_good[:, 0], positions_good[:, 1], positions_good[:, 2],
+        c=cmap_indices, cmap=cmap, vmin=0, vmax=n_colors - 1,
+        s=30, depthshade=True, alpha=1.0, label='good (colored by lattice)'
+    )
+    ax.scatter(
+        positions_bad[:, 0], positions_bad[:, 1], positions_bad[:, 2],
+        c='k', s=5, depthshade=True, alpha=0.5, label='bad', zorder=10
+    )
+    ax.quiver(
+        positions_good[:, 0], positions_good[:, 1], positions_good[:, 2],
+        orientations_good[:, 0], orientations_good[:, 1], orientations_good[:, 2],
+        length=arrow_scale, color='k', linewidth=0.5, arrow_length_ratio=0.1
+    )
+    ax.quiver(
+        positions_flipped[:, 0], positions_flipped[:, 1], positions_flipped[:, 2],
+        orientations_flipped[:, 0], orientations_flipped[:, 1], orientations_flipped[:, 2],
+        length=arrow_scale, color='r', linewidth=0.5, arrow_length_ratio=0.1
+    )
 
-        # labels and view
-        ax.set_xlabel('x')
-        ax.set_ylabel('y')
-        ax.set_zlabel('z')
-        ax.legend()
-        ax.set_title(f'{filename.stem}')
-        ax.set_box_aspect([1, 1, 1])  # equal aspect ratio
+    # labels and view
+    ax.set_xlabel('x')
+    ax.set_ylabel('y')
+    ax.set_zlabel('z')
+    ax.legend()
+    ax.set_title(f'{filename.stem}')
+    ax.set_box_aspect([1, 1, 1])  # equal aspect ratio
 
-        plt.tight_layout()
-        plt.show()
+    plt.tight_layout()
+    plt.show()
 
 
 def flip_particles(
@@ -332,7 +332,7 @@ def main(
     min_neighbours: int = typer.Option(3, help='Remove particles with less than this number of neighbours'),
     min_array_size: int = typer.Option(6, help='Remove lattices with less than this number of valid particles'),
     flip_z: bool = typer.Option(False, help='Rotate particles 180 degrees around their x-axis if facing opposite to lattice average orientation'),
-    plot: bool = typer.Option(False, help='Plot before saving the cleaned file')
+    plot: bool = typer.Option(False, help='Plot before saving the cleaned file'),
 ):
     # get the csv files, handling the shell expansion
     csv_files = parse_csv_pattern(csv_pattern)
@@ -356,7 +356,8 @@ def main(
         all_particles += total_particles
         all_clean += clean_particles
 
-    print(f'\nTotal number of particles left after cleaning={all_clean}/{all_particles} '
+    print(f'{len(csv_files)} files processed.\n'
+        f'Total number of particles left after cleaning={all_clean}/{all_particles} '
         f'({all_particles - all_clean} removed)')
 
 if __name__ == '__main__':
