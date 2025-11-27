@@ -308,8 +308,9 @@ def process_file(
 @cli.command(no_args_is_help=True, help='Remove particles from emClarity CSV files based on simple geometry constrains')
 def main(
     csv_pattern: str = typer.Option(..., help='Path or glob pattern for CSV file(s), e.g., "tilt1_1_bin6.csv" or "convmap/*.csv"'),
-    min_distance: float = typer.Option(20, help='Min distance between particles, in unbinned pixels'),
-    max_distance: float = typer.Option(120, help='Max distance between particles, in unbinned pixels'),
+    angpix: float = typer.Option(0, help='Pixel size in Ang/pix. If used, min_distance and max_distance should be in Ang'),
+    min_distance: float = typer.Option(20, help='Min distance between particles, in unbinned pixels (default) or in Ang if --angpix is used'),
+    max_distance: float = typer.Option(120, help='Max distance between particles, in unbinned pixels (default) or in Ang if --angpix is used'),
     angle_tolerance: float = typer.Option(40, help='Angle tolerance between particles, in degrees. Clamped between 0 to 90'),
     allow_flipped_particles: bool = typer.Option(True, help='When filtering based on the angle tolerance, ignore whether particles are up or down.'),
     curvature_tolerance: float = typer.Option(40, help='Curvature tolerance between particles, in degrees. Clamped between 0 to 90'),
@@ -338,8 +339,8 @@ def main(
     for csv_file_str in csv_files:
         total_particles, clean_particles = process_file(
             csv_file=Path(csv_file_str),
-            min_distance=min_distance,
-            max_distance=max_distance,
+            min_distance=min_distance/angpix if angpix else min_distance,
+            max_distance=max_distance/angpix if angpix else max_distance,
             angle_tolerance=angle_tolerance,
             curvature_tolerance=curvature_tolerance,
             min_neighbours=min_neighbours,
