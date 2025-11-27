@@ -8,6 +8,7 @@ from pathlib import Path
 from numpy.typing import NDArray
 from scipy.sparse import csr_matrix
 from scipy.sparse.csgraph import connected_components
+from typing import Tuple
 
 cli = typer.Typer(add_completion=False)
 
@@ -16,7 +17,9 @@ def plot_3d(df: pd.DataFrame, filename: Path, arrow_scale: float = 0.05):
     particles_good = df[df['class'] != -9999]
     particles_bad  = df[df['class'] == -9999]
     particles_flipped = df[df['class'] == -1]
-
+    if len(particles_good) == 0:
+        print(f'All the particles were removed, skipping plot for {filename.stem}')
+        return
     # normalize positions between [0,1]
     positions_all = df[['tx','ty','tz']].to_numpy()
     positions_min = positions_all.min(axis=0)
@@ -157,7 +160,7 @@ def clean_particles(
     orientation_flip: bool,
     z_shift_if_flipped: float,
     plot: bool,
-) -> pd.DataFrame:
+) -> Tuple[pd.DataFrame, int, int]:
     # extract the data
     positions = df[['tx', 'ty', 'tz']].to_numpy(dtype=np.float64)
     rotation_matrices = df[
@@ -211,6 +214,7 @@ def clean_particles(
     large_lattice_ids = n_particles_per_lattice >= max(1, min_lattice_size)
     particles_in_lattice = large_lattice_ids[particles_lattice_id] & valid  # (n,)
     df.loc[~particles_in_lattice, 'class'] = -9999
+    total, clean = n_particles, particles_in_lattice.sum()
     print(f'Particles left={particles_in_lattice.sum()}/{n_particles} '
           f'({n_particles - particles_in_lattice.sum()} removed)')
 
@@ -231,7 +235,7 @@ def clean_particles(
             plot=plot,
         )
 
-    return df
+    return df, total, clean
 
 
 def process_file(
@@ -269,7 +273,7 @@ def process_file(
     min_curvature = np.sin(np.radians(-curvature_tolerance))
     max_curvature = np.sin(np.radians(+curvature_tolerance))
 
-    df = clean_particles(
+    df, total, clean = clean_particles(
         df,
         min_distance,
         max_distance,
@@ -298,21 +302,12 @@ def process_file(
     df.to_csv(output_file, sep=' ', header=False, index=False)
     print(f'Saved cleaned dataframe: {output_file}\n')
 
+    return total, clean
 
-@cli.command(no_args_is_help=True, help='Remove particles from emClarity CSV files based on simple geometry constrains')
-def main(
-    csv_pattern: str = typer.Option(..., help='Path or glob pattern for CSV file(s), e.g., "tilt1_1_bin6.csv" or "convmap/*.csv"'),
-    min_distance: float = typer.Option(20, help='Min distance between particles, in unbinned pixels'),
-    max_distance: float = typer.Option(120, help='Max distance between particles, in unbinned pixels'),
-    angle_tolerance: float = typer.Option(40, help='Angle tolerance between particles, in degrees. Clamped between 0 to 90'),
-    allow_flipped_particles: bool = typer.Option(True, help='When filtering based on the angle tolerance, ignore whether particles are up or down.'),
-    curvature_tolerance: float = typer.Option(40, help='Curvature tolerance between particles, in degrees. Clamped between 0 to 90'),
-    min_neighbours: int = typer.Option(3, help='Remove particles with less than this number of neighbours'),
-    min_array_size: int = typer.Option(6, help='Remove lattices with less than this number of valid particles'),
-    flip_z: bool = typer.Option(False, help='Rotate particles 180 degrees around their x-axis if facing opposite to lattice average orientation'),
-    plot: bool = typer.Option(False, help='Plot before saving the cleaned file'),
-):
-    # get the csv files, handling the shell expansion
+
+def parse_csv_pattern(csv_pattern):
+    if "'" in csv_pattern:
+        csv_pattern=csv_pattern.replace("'","")
     pattern_path = Path(csv_pattern)
     if pattern_path.exists() and pattern_path.is_file():
         csv_files = [str(pattern_path)]
@@ -323,12 +318,33 @@ def main(
         print(f'Error: No files found matching pattern: {csv_pattern}')
         raise typer.Exit(code=1)
 
+    return csv_files
+
+@cli.command(no_args_is_help=True, help='Remove particles from emClarity CSV files based on simple geometry constrains')
+def main(
+    csv_pattern: str = typer.Option(..., help='Path or glob pattern for CSV file(s), e.g., "tilt1_1_bin6.csv" or "convmap/*.csv"'),
+    angpix: float = typer.Option(0, help='Pixel size in Ang/pix. If used, min_distance and max_distance should be in Ang'),
+    min_distance: float = typer.Option(20, help='Min distance between particles, in unbinned pixels (default) or in Ang if --angpix is used'),
+    max_distance: float = typer.Option(120, help='Max distance between particles, in unbinned pixels (default) or in Ang if --angpix is used'),
+    angle_tolerance: float = typer.Option(40, help='Angle tolerance between particles, in degrees. Clamped between 0 to 90'),
+    allow_flipped_particles: bool = typer.Option(True, help='When filtering based on the angle tolerance, ignore whether particles are up or down.'),
+    curvature_tolerance: float = typer.Option(40, help='Curvature tolerance between particles, in degrees. Clamped between 0 to 90'),
+    min_neighbours: int = typer.Option(3, help='Remove particles with less than this number of neighbours'),
+    min_array_size: int = typer.Option(6, help='Remove lattices with less than this number of valid particles'),
+    flip_z: bool = typer.Option(False, help='Rotate particles 180 degrees around their x-axis if facing opposite to lattice average orientation'),
+    plot: bool = typer.Option(False, help='Plot before saving the cleaned file'),
+):
+    # get the csv files, handling the shell expansion
+    csv_files = parse_csv_pattern(csv_pattern)
+
     # process each file
+    all_particles = 0
+    all_clean = 0
     for csv_file_str in csv_files:
-        process_file(
+        total_particles, clean_particles = process_file(
             csv_file=Path(csv_file_str),
-            min_distance=min_distance,
-            max_distance=max_distance,
+            min_distance=min_distance/angpix if angpix else min_distance,
+            max_distance=max_distance/angpix if angpix else max_distance,
             angle_tolerance=angle_tolerance,
             curvature_tolerance=curvature_tolerance,
             min_neighbours=min_neighbours,
@@ -337,7 +353,12 @@ def main(
             flip_z=flip_z,
             plot=plot,
         )
+        all_particles += total_particles
+        all_clean += clean_particles
 
+    print(f'{len(csv_files)} files processed.\n'
+        f'Total number of particles left after cleaning={all_clean}/{all_particles} '
+        f'({all_particles - all_clean} removed)')
 
 if __name__ == '__main__':
     cli()
