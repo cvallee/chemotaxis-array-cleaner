@@ -305,6 +305,21 @@ def process_file(
     return total, clean
 
 
+def parse_csv_pattern(csv_pattern):
+    if "'" in csv_pattern:
+        csv_pattern=csv_pattern.replace("'","")
+    pattern_path = Path(csv_pattern)
+    if pattern_path.exists() and pattern_path.is_file():
+        csv_files = [str(pattern_path)]
+    else:
+        csv_files = sorted(glob_module.glob(csv_pattern))
+
+    if not csv_files:
+        print(f'Error: No files found matching pattern: {csv_pattern}')
+        raise typer.Exit(code=1)
+
+    return csv_files
+
 @cli.command(no_args_is_help=True, help='Remove particles from emClarity CSV files based on simple geometry constrains')
 def main(
     csv_pattern: str = typer.Option(..., help='Path or glob pattern for CSV file(s), e.g., "tilt1_1_bin6.csv" or "convmap/*.csv"'),
@@ -317,21 +332,10 @@ def main(
     min_neighbours: int = typer.Option(3, help='Remove particles with less than this number of neighbours'),
     min_array_size: int = typer.Option(6, help='Remove lattices with less than this number of valid particles'),
     flip_z: bool = typer.Option(False, help='Rotate particles 180 degrees around their x-axis if facing opposite to lattice average orientation'),
-    plot: bool = typer.Option(False, help='Plot before saving the cleaned file'),
-    windows: bool = typer.Option(False, help='If you are using on Windows prompt')
+    plot: bool = typer.Option(False, help='Plot before saving the cleaned file')
 ):
     # get the csv files, handling the shell expansion
-    if windows:
-        csv_pattern=csv_pattern.replace("'","")
-    pattern_path = Path(csv_pattern)
-    if pattern_path.exists() and pattern_path.is_file():
-        csv_files = [str(pattern_path)]
-    else:
-        csv_files = sorted(glob_module.glob(csv_pattern))
-
-    if not csv_files:
-        print(f'Error: No files found matching pattern: {csv_pattern}')
-        raise typer.Exit(code=1)
+    csv_files = parse_csv_pattern(csv_pattern)
 
     # process each file
     all_particles = 0
