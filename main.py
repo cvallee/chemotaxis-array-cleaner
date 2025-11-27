@@ -311,8 +311,11 @@ def main(
     min_array_size: int = typer.Option(6, help='Remove lattices with less than this number of valid particles'),
     flip_z: bool = typer.Option(False, help='Rotate particles 180 degrees around their x-axis if facing opposite to lattice average orientation'),
     plot: bool = typer.Option(False, help='Plot before saving the cleaned file'),
+    windows: bool = typer.Option(False, help='If you are using on Windows prompt')
 ):
     # get the csv files, handling the shell expansion
+    if windows:
+        csv_pattern=csv_pattern.replace("'","")
     pattern_path = Path(csv_pattern)
     if pattern_path.exists() and pattern_path.is_file():
         csv_files = [str(pattern_path)]
